@@ -1,0 +1,103 @@
+# To use:
+# The root key for each feed file being processed must be the actual filename
+# of the Property List (plist) file that has values to be overridden.
+# For each package that has values to be overriden, the subkey correspond to
+# an equivalent key in the corrsponding feed plist.
+# Each value to be overriden must use the same key as per the corresponding
+# feed plist.
+#
+# For example, to override items in the 'garageband1012.plist' file:
+# garageband1012.plist: # This is the feed file being overridden.
+#  IRsSurroundPackage:  # This is the package in the feed file to override
+#   IsMandatory: true   # This 'key: value' pair exists in the feed file.
+#   BadWolfIgnore: true # This 'key: value' par does not exist but will be added
+#
+# The 'BadWolfIgnore' key in any package is added as a means of ignoring that specifc
+# package from deployments/downloads as it is not specifically required in that given
+# feed file/app combo.
+#
+# ----- GarageBand ----- #
+garageband1021.plist:               # Feed for GarageBand versions using the garageband1021.plist
+  GarageBand11ExtraContentPackage:  # The package being overridden
+    BadWolfIgnore: true             # Exclude this package from being downloaded/installed
+  IRsSurroundPackage:
+    BadWolfIgnore: true
+  JamPack1AppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPack1InstrumentsPackage:
+    BadWolfIgnore: true
+  JamPackRemixToolsAppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPackRemixToolsInstrumentsPackage:
+    BadWolfIgnore: true
+  JamPackRhythmSectionAppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPackRhythmSectionInstrumentsPackage:
+    BadWolfIgnore: true
+  JamPackSymphonyOrchestraAppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPackSymphonyOrchestraInstrumentsPackage:
+    BadWolfIgnore: true
+  JamPackVoicesAppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPackVoicesInstrumentsPackage:
+    BadWolfIgnore: true
+  JamPackWorldMusicAppleLoopsPackage:
+    BadWolfIgnore: true
+  JamPackWorldMusicInstrumentsPackage:
+    BadWolfIgnore: true
+  Logic9LegacyContentPackage:
+    BadWolfIgnore: true
+  MAContent10_AssetPack_0357_EXS_BassAcousticUprightJazz:
+    IsMandatory: true
+  MAContent10_AssetPack_0358_EXS_BassElectricFingerStyle:
+    IsMandatory: true
+  MAContent10_AssetPack_0482_EXS_OrchWoodwindAltoSax:
+    IsMandatory: true
+  MAContent10_AssetPack_0484_EXS_OrchWoodwindClarinetSolo:
+    IsMandatory: true
+  MAContent10_AssetPack_0487_EXS_OrchWoodwindFluteSolo:
+    IsMandatory: true
+  MAContent10_AssetPack_0491_EXS_OrchBrass:
+    IsMandatory: true
+  MAContent10_AssetPack_0509_EXS_StringsEnsemble:
+    IsMandatory: true
+# ----- Logic Pro ----- #
+logicpro1021.plist:  # Yes, all these versions of Logic Pro really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+logicpro1022.plist:  # Yes, all these versions of Logic Pro really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+logicpro1023.plist:  # Yes, all these versions of Logic Pro really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+logicpro1030.plist:  # Yes, all these versions of Logic Pro really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+logicpro1032.plist:  # Yes, all these versions of Logic Pro really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+logicpro1050.plist:
+  MAContent10_AssetPack_0755_AppleLoopsPrismatica:
+    DownloadName: MAContent10_AssetPack_0801_AppleLoopsPrismaticaB.pkg
+    PackageID: com.apple.pkg.MAContent10_AssetPack_0801_AppleLoopsPrismaticaB
+  MAContent10_AssetPack_0796_DemosongLogicoceaneyes:
+    FileCheck: /Library/Application Support/Logic/Logic Pro X Demosongs/ocean eyes.logicx/Alternatives/001/DisplayState.plist
+# ----- MainsStage ----- #
+mainstage323.plist:  # Yes, all these versions of MainStage really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+mainstage324.plist: # Yes, all these versions of MainStage really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround
+
+mainstage330.plist: # Yes, all these versions of MainStage really do have the same PackageID typo of double 'MAContent10_' in the ID
+  IRsSurroundPackage:
+    PackageID: com.apple.pkg.MAContent10_IRsSurround

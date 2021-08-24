@@ -1,0 +1,18 @@
+version: 1
+formatters:
+  simple:
+    format: '%(asctime)s - %(name)s.%(funcName)s - %(levelname)s - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+handlers:
+  standardout:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+    filters: [INFO]
+  standarderr:
+    class: logging.StreamHandler
+    level: ERROR
+    formatter: simple
+    stream: ext://sys.stderr
+    filters: [CRITICAL, DEBUG, ERROR]

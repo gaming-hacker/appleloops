@@ -1,0 +1,230 @@
+standard:
+  - args:
+    - --APFS
+    kwargs:
+      action: store_true
+      dest: apfs_dmg
+      help: dmg is created with APFS
+      required: false
+  - args:
+    - --compare-style
+    kwargs:
+      dest: compare_style
+      help: diff comparison styles. defaults to unified
+      metavar: <style>
+      choices:
+        - context
+        - html
+        - unified
+      required: false
+      type: &id001 !!python/name:builtins.str ''
+  - args:
+    - -n
+    - --dry-run
+    kwargs:
+      action: store_true
+      dest: dry_run
+      help: performs a dry run
+      required: false
+  - args:
+    - -f
+    - --force
+    kwargs:
+      action: store_true
+      dest: force
+      help: force action (only for downloads/deployments)
+      required: false
+  - args:
+    - --flat
+    kwargs:
+      action: store_true
+      dest: flat_mirror
+      help: download content into a single folder
+      required: false
+  - args:
+    - --http2
+    kwargs:
+      action: store_true
+      dest: http2
+      help: forces cURL to use http2
+      required: false
+  - args:
+    - --ignore-patches
+    kwargs:
+      action: store_true
+      dest: ignore_patches
+      help: ignores any patches to fix reported issues with deployments
+      required: false
+  - args:
+    - -i
+    - --allow-insecure
+    kwargs:
+      action: store_true
+      dest: insecure
+      help: ignore invalid certificates when downloading
+      required: false
+  - args:
+    - -l
+    - --log-level
+    kwargs:
+      choices:
+      - DEBUG
+      - INFO
+      default: INFO
+      dest: log_level
+      help: specify logging level INFO (default) or DEBUG
+      metavar: <level>
+      required: false
+      type: *id001
+  - args:
+    - -m
+    - --mandatory
+    kwargs:
+      action: store_true
+      dest: mandatory
+      help: processes the mandatory packages
+      required: false
+  - args:
+    - -o
+    - --optional
+    kwargs:
+      action: store_true
+      dest: optional
+      help: processes the optional packages
+      required: false
+  - args:
+    - -s
+    - --silent
+    kwargs:
+      action: store_true
+      dest: silent
+      help: no output to stdout
+      required: false
+  - args:
+    - --sleep
+    kwargs:
+      dest: sleep
+      help: specify the number of seconds to pause between installation and download
+      metavar: <sleep>
+      required: false
+      type: *id001
+  - args:
+    - -u
+    - --allow-untrusted
+    kwargs:
+      action: store_true
+      dest: unsigned
+      help: installs packages with invalid certificates
+      required: false
+  - args:
+    - -v
+    - --version
+    kwargs:
+      action: version
+  - args:
+    - --summary-only
+    kwargs:
+      action: store_true
+      dest: summary_only
+      help: only prints summary info, skipping download/install messages
+      required: false
+mutually_exclusive:
+  deployment:
+    - args:
+      - --deployment
+      kwargs:
+        action: store_true
+        dest: deployment
+        help: install packages (must be run as root)
+        required: false
+    - args:
+      - -d
+      - --destination
+      kwargs:
+        dest: destination
+        help: download packages to the specified destination
+        metavar: <destination>
+        required: false
+        default: '/tmp/appleloops'
+        type: *id001
+    - args:
+      - -b
+      - --build-dmg
+      kwargs:
+        dest: build_dmg
+        help: builds a DMG containing downloaded packages
+        metavar: <filename>
+        required: false
+        type: *id001
+  plists:
+  - args:
+    - -a
+    - --apps
+    kwargs:
+      dest: apps
+      help: specify the application to process loops for
+      metavar: <app>
+      nargs: +
+      required: false
+      type: *id001
+  - args:
+    - --compare
+    kwargs:
+      dest: compare
+      help: compare package differences between two property lists
+      metavar: <plist>
+      nargs: 2
+      required: false
+      type: *id001
+  - args:
+    - --fetch-latest
+    kwargs:
+      dest: fetch_latest
+      help: fetch latest content for apps
+      metavar: <app>
+      nargs: +
+      required: false
+  - args:
+    - -p
+    - --plists
+    kwargs:
+      dest: plists
+      help: specify a property list to process packages for
+      metavar: <plist>
+      nargs: +
+      required: false
+      type: *id001
+  - args:
+    - --supported-plists
+    kwargs:
+      action: store_true
+      dest: show_plists
+      help: lists supported property lists
+      required: false
+  - args:
+    - --packages
+    kwargs:
+      dest: packages
+      help: specify individual package/s to download/install
+      metavar: <pkg>
+      nargs: +
+      required: false
+      type: *id001
+  pkg_sources:
+  - args:
+    - -c
+    - --cache-server
+    kwargs:
+      dest: cache_server
+      help: specify a local Apple caching server (HTTPS unsupported)
+      metavar: http://example.org:12345
+      required: false
+      type: *id001
+  - args:
+    - --pkg-server
+    kwargs:
+      dest: pkg_server
+      help: specify a local http/https mirror, or hosted dmg file
+      metavar: https://example.org/packages_path/
+      required: false
+      type: *id001

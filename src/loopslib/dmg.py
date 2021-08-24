@@ -1,293 +1,148 @@
-"""Contains class relating to building DMG files."""
 import logging
+import re
 import subprocess
 import sys
 
-from os import path, remove
+from pathlib import Path
 
-# pylint: disable=relative-import
-try:
-    import config
-    import plist
-except ImportError:
-    from . import config
-    from . import plist
-# pylint: enable=relative-import
+from . import plist
+from . import ARGS
+from . import DMG_DEFAULT_FS
+from . import DMG_MOUNT
+from . import DMG_VOLUME_NAME
+from . import VALID_DMG_FS
 
 LOG = logging.getLogger(__name__)
 
-# pylint: disable=too-many-nested-blocks
+
+def mount_device(entities):
+    """Return tuple of (mountpoint, device) from 'hdiutil' output"""
+    result = None
+    reg = re.compile(r'/dev/disk\d+')
+
+    # When a DMG is mounted, the mount volume and device 'keys'
+    # are in the same entity, so when both 'mount' and 'device'
+    # exist, we have the right info.
+    for ent in entities:
+        _dev = ent.get('dev-entry', None)
+        device = re.findall(reg, _dev)[0] if _dev else None
+        mount = ent.get('mount-point', None)
+
+        if mount and device:
+            result = (mount, device)
+            break
+
+    return result
 
 
-class BuildDMG(object):
-    """Class for handling DMG files."""
-    def __init__(self, filename=None):
-        self._hdiutil = '/usr/bin/hdiutil'
-        self._valid_fs = ['HFS+J' 'HFS+', 'APFS']
-        self._volume_kind = {'HFS+': 'hfs',
-                             'HFS+J': 'hfs',
-                             'APFS': 'apfs'}
+def mount(f, mountpoint=DMG_MOUNT, read_only=False, dry_run=ARGS.dry_run):
+    """Mount a DMG, returns the mount path if successful"""
+    result = None
+    cmd = ['/usr/bin/hdiutil', 'attach', '-mountpoint', str(mountpoint), '-plist', f]
 
-        self.filename = filename
-        self.sparse_image = '{}.sparseimage'.format(path.splitext(filename)[0]) if filename else None
-        self.volume_name = config.DMG_VOLUME_NAME
+    # Insert read only option in the correct spot
+    if read_only:
+        cmd.insert(2, '-readonly')
 
-        if config.APFS_DMG:
-            self.filesystem = 'APFS'
+    if not dry_run:
+        _p = subprocess.run(cmd, capture_output=True)
+        LOG.debug('{cmd} ({returncode})'.format(cmd=' '.join([str(x) for x in cmd]), returncode=_p.returncode))
+
+        if _p.returncode == 0:
+            _entities = plist.read_string(_p.stdout).get('system-entities')
+
+            if _entities:
+                result = mount_device(_entities)
+                LOG.warning('Mounted {dmg} to {mountpoint}'.format(dmg=f, mountpoint=mountpoint))
         else:
-            self.filesystem = 'HFS+'
+            LOG.info(_p.stderr.decode('utf-8').strip())
+    else:
+        LOG.warning('Mount {dmg} to {mountpoint}'.format(dmg=f, mountpoint=mountpoint))
 
-        LOG.debug('DMG file system set to: {}'.format(self.filesystem))
+    return result
 
-    def _eject(self, sparseimage, action):
-        """Unmounts the specified DMG to the local filesystem."""
-        if action in ['detach', 'eject']:
-            cmd = [self._hdiutil,
-                   action,
-                   '-quiet',
-                   sparseimage]
 
-            # Have to umount DMG if '--pkg-server' is a DMG
-            if not config.DRY_RUN:
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                p_result, p_error = process.communicate()
+def eject(mountpoint=DMG_MOUNT, silent=False, dry_run=ARGS.dry_run):
+    """Eject a mounted DMG"""
+    if not isinstance(mountpoint, Path):
+        mountpoint = Path(mountpoint)
 
-                if process.returncode == 0:
-                    LOG.info('Unmounted {}'.format(sparseimage))
-                    LOG.debug(p_result)
-                else:
-                    LOG.debug('{}: {} - {}'.format(' '.join(cmd), process.returncode, p_error))
+    cmd = ['/usr/bin/hdiutil', 'eject', str(mountpoint)]
 
-                    print(p_error)
-                    sys.exit(process.returncode)
+    if not dry_run and not mountpoint.exists():
+        LOG.warning('Cannot unmount {mountpoint} - it does not exist'.format(mountpoint=mountpoint))
+    elif not dry_run and mountpoint.exists():
+        _p = subprocess.run(cmd, capture_output=True, encoding='utf-8')
+        LOG.debug('{cmd} ({returncode})'.format(cmd=' '.join([str(x) for x in cmd]), returncode=_p.returncode))
 
-                # Log success/fail with short message.
-                LOG.debug('{}: {}'.format(' '.join(cmd), process.returncode))
+        if _p.returncode == 0:
+            if not silent:
+                LOG.info('Unmounted {mountpoint}'.format(mountpoint=mountpoint))
         else:
-            raise Exception('Unexpected \'hdiutil\' action: {}'.format(action))
+            LOG.debug('Error: '. _p.stderr.strip() if _p.stderr else _p.stdout.strip())
+    elif ARGS.dry_run and not dry_run:
+        LOG.warning('Unmount {mountpoint}'.format(mountpoint=mountpoint))
 
-    # pylint: disable=no-self-use
-    def _get_devicepath(self, output):
-        """Gets the '/dev/disk' device path from the output of the 'hdiutil' command."""
-        # Use the PLIST output to set 'config.DMG_VOLUME_MOUNTPATH'
-        result = None
 
-        # This method is used to read buffer input and dict input.
-        if isinstance(output, dict):
-            _result = output['system-entities']
+def create_sparse(f, vol=DMG_VOLUME_NAME, fs=DMG_DEFAULT_FS, mountpoint=DMG_MOUNT, dry_run=ARGS.dry_run):
+    """Create a thin sparse image, returns the mount point if successfully created"""
+    result = None
+    sparseimage = Path('{f}.sparseimage'.format(f=f)) if not str(f).endswith('.sparseimage') else Path(f)
+
+    if not isinstance(mountpoint, Path):
+        mountpoint = Path(mountpoint)
+
+    if not dry_run:
+        if fs not in VALID_DMG_FS:
+            raise TypeError
+
+        # If the sparseimage exists and is already mounted
+        if sparseimage.exists() and mountpoint.exists():
+            LOG.warning('Unmounting existing mount point for {mount}'.format(mount=mountpoint))
+            eject(silent=True)
+            result = mount(sparseimage, mountpoint)
         else:
-            _result = plist.readPlistFromString(output)['system-entities']
+            cmd = ['/usr/bin/hdiutil', 'create', '-ov', '-plist', '-volname', vol, '-fs', fs, '-attach', '-type', 'SPARSE', str(f)]
+            _p = subprocess.run(cmd, capture_output=True)
+            LOG.debug('{cmd} ({returncode})'.format(cmd=' '.join([str(x) for x in cmd]), returncode=_p.returncode))
 
-        for item in _result:
-            _ch = item.get('content-hint', None)
+            if _p.returncode == 0:
+                LOG.warning('Created temporary sparseimage for {img}'.format(img=f))
+                _stdout = plist.read_string(_p.stdout)
+                _entities = _stdout.get('system-entities')
+                # _image_path = _stdout.get('image-components')[0]  # This may not always be the sparseimage filename?
 
-            # This is required for APFS because it seems to not properly eject
-            # the volume, so an eject on the device is required.
-            # if self.filesystem == 'APFS' and _ch == 'GUID_partition_scheme':
-            if _ch == 'GUID_partition_scheme':
-                # config.DMG_DISK_DEV = item.get('dev-entry', None)
-                result = item.get('dev-entry', None)
-                break
-
-        return result
-    # pylint: enable=no-self-use
-
-    def _sparse_exists(self):
-        """Gets information about any potential attached sparse images to avoid
-        volume and image entangling."""
-        result = None
-
-        cmd = [self._hdiutil, 'info', '-plist']
-
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        p_result, p_error = process.communicate()
-
-        if process.returncode == 0:
-            _result = plist.readPlistFromString(p_result).get('images', None)
-
-            if _result:
-                for image in _result:
-                    _image_path = image.get('image-path', None)
-                    _image_type = image.get('image-type', None)
-                    _sys_entity = image.get('system-entities')
-
-                    if _image_path and _image_type:
-                        if _image_path == self.sparse_image:
-                            if _image_type == 'sparse disk image' and _sys_entity:
-                                _de = self._get_devicepath(output=image)
-                                _mp = self._get_mountpath(output=image)
-
-                                result = dict()
-                                result['mount-point'] = _mp
-                                result['dev-entry'] = _de
-                                break
-        else:
-            LOG.debug('{}: {} - {}'.format(' '.join(cmd), process.returncode, p_error))
-
-            print(p_error)
-            sys.exit(process.returncode)
-
-        # Log success/fail with short message.
-        LOG.debug('{}: {}'.format(' '.join(cmd), process.returncode))
-
-        return result
-
-    def _get_mountpath(self, output):
-        """Gets the mount path of a sparseimage/dmg file from the output of the 'hdiutil' command."""
-        # Use the PLIST output to set 'config.DMG_VOLUME_MOUNTPATH'
-        result = None
-
-        # This method is used to read buffer input and dict input.
-        if isinstance(output, dict):
-            _result = output['system-entities']
-
-            for item in _result:
-                result = item.get('mount-point', None)
-
-                if result:
-                    break
-        else:
-            _result = plist.readPlistFromString(output)['system-entities']
-
-            for item in _result:
-                _vk = item.get('volume-kind', None)
-
-                if _vk and _vk == self._volume_kind[self.filesystem]:
-                    result = item.get('mount-point', None)
-                    break
-
-        return result
-
-    def convert_sparseimage(self, sparseimage):
-        """Converts the temporary DMG into the final DMG file."""
-        # Unmount sparseimage first.
-        self.eject(dmg=config.DMG_VOLUME_MOUNTPATH)
-
-        cmd = [self._hdiutil,
-               'convert',
-               '-ov',
-               '-quiet',
-               sparseimage,
-               '-format',
-               'UDZO',
-               '-o',
-               self.filename]
-
-        if not config.DRY_RUN:
-            LOG.info('Converting {}'.format(sparseimage))
-
-            if not (config.QUIET or config.SILENT):
-                print('Converting {}'.format(sparseimage))
-
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            p_result, p_error = process.communicate()
-
-            if process.returncode == 0:
-                LOG.info('Created {}'.format(self.filename))
-                LOG.debug(p_result)
-
-                if not (config.QUIET or config.SILENT):
-                    print('Created {}'.format(self.filename))
-
-                # Clean up in Aisle DMG
-                try:
-                    remove(sparseimage)
-
-                    LOG.info('Cleaned up {}'.format(sparseimage))
-                except OSError:
-                    pass
+                if _entities:
+                    result = mount_device(_entities)
+                    LOG.warning('Mounted sparse image to {mountpoint}'.format(mountpoint=result))
             else:
-                LOG.debug('{}: {} - {}'.format(' '.join(cmd), process.returncode, p_error))
+                LOG.info(_p.stderr.decode('utf-8').strip())
+                sys.exit(88)
+    else:
+        LOG.warning('Create {sparseimage} ({volume}i, {fs}) and mount to {mountpoint}'.format(sparseimage=f, volume=vol, fs=fs, mountpoint=mountpoint))
 
-                print(p_error)
-                sys.exit(process.returncode)
+    if result and sparseimage and sparseimage not in result:
+        result = (sparseimage, result[0], result[1])
 
-            # Log success/fail with short message.
-            LOG.debug('{}: {}'.format(' '.join(cmd), process.returncode))
+    return result
 
-    def eject(self, dmg):
-        """Detaches and ejects an DMG/Sparse Image"""
-        # For some reason, APFS requires the _device_ to be detached, not the Volume name.
-        if self.filesystem == 'APFS':
-            self._eject(sparseimage=config.DMG_DISK_DEV, action='detach')
+
+def convert_sparse(s, f, dry_run=ARGS.dry_run):
+    """Converts a sparse image to DMG, returns the DMG path if successful"""
+    result = None
+    cmd = ['/usr/bin/hdiutil', 'convert', '-ov', '-quiet', str(s), '-format', 'UDZO', '-o', str(f)]
+
+    if not dry_run:
+        LOG.info('Converting {sparseimage}'.format(sparseimage=s))
+        # Eject first
+        eject(silent=True)
+        _p = subprocess.run(cmd, capture_output=True, encoding='utf-8')
+        LOG.debug('{cmd} ({returncode})'.format(cmd=' '.join([str(x) for x in cmd]), returncode=_p.returncode))
+
+        if _p.returncode == 0:
+            LOG.info('Created {dmg}'.format(dmg=f))
+            result = Path(f)
         else:
-            self._eject(sparseimage=dmg, action='detach')
+            LOG.info(_p.stderr.strip())
 
-    def make_sparseimage(self):
-        """Creates a thin 'sparseimage' for temporary file storage when making a DMG."""
-        # Do not specify a filesize here, otherwise the image will not thin provision space.
-        cmd = [self._hdiutil,
-               'create',
-               '-ov',
-               '-plist',
-               '-volname',
-               self.volume_name,
-               '-fs',
-               self.filesystem,
-               '-attach',
-               '-type',
-               'SPARSE',
-               self.sparse_image]
-
-        if not config.DRY_RUN:
-            _sparse_exists = self._sparse_exists()
-
-            if _sparse_exists:
-                config.DMG_VOLUME_MOUNTPATH = _sparse_exists['mount-point']
-                config.DMG_DISK_DEV = _sparse_exists['dev-entry']
-            else:
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                p_result, p_error = process.communicate()
-
-                if process.returncode == 0:
-                    LOG.info('Created temporary sparseimage {}'.format(self.sparse_image))
-
-                    if not (config.QUIET or config.SILENT):
-                        print('Created temporary sparseimage')
-
-                    config.DMG_VOLUME_MOUNTPATH = self._get_mountpath(output=p_result)
-                    config.DMG_DISK_DEV = self._get_devicepath(output=p_result)
-                else:
-                    LOG.debug('{}: {} - {}'.format(' '.join(cmd), process.returncode, p_error))
-
-                    print(p_error)
-                    sys.exit(process.returncode)
-
-                # Log success/fail with short message.
-                LOG.debug('{}: {}'.format(' '.join(cmd), process.returncode))
-
-    def mount(self, dmg, read_only=False):
-        """Mounts the specified 'dmg' file."""
-        cmd = [self._hdiutil,
-               'attach',
-               '-plist',
-               dmg]
-
-        if read_only and isinstance(read_only, bool):
-            cmd.insert(2, '-readonly')
-
-        # Have to mount DMG if '--pkg-server' is a DMG
-        if not config.DRY_RUN:
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            p_result, p_error = process.communicate()
-
-            if process.returncode == 0:
-                LOG.info('Mounted {}'.format(dmg))
-
-                if not (config.QUIET or config.SILENT):
-                    print('Mounted {}'.format(dmg))
-
-                config.DMG_VOLUME_MOUNTPATH = self._get_mountpath(output=p_result)
-                config.DMG_DISK_DEV = self._get_devicepath(output=p_result)
-            else:
-                LOG.debug('{}: {} - {}'.format(' '.join(cmd), process.returncode, p_error))
-
-                print(p_error)
-                sys.exit(process.returncode)
-
-            # Log success/fail with short message.
-            LOG.debug('{}: {}'.format(' '.join(cmd), process.returncode))
-
-        if config.DRY_RUN and config.HTTP_DMG:
-            config.DMG_VOLUME_MOUNTPATH = config.DRY_RUN_VOLUME_MOUNTPATH
-# pylint: enable=too-many-nested-blocks
+    return result

@@ -1,119 +1,76 @@
-"""Contains the function for comparing two property lists."""
+import difflib
 import logging
-import os
 import sys
-import tempfile
 
-# pylint: disable=relative-import
-try:
-    import config
-    import curl_requests
-    import misc
-    import plist
-except ImportError:
-    from . import config
-    from . import curl_requests
-    from . import misc
-    from . import plist
-# pylint: enable=relative-import
+from pathlib import Path
+
+from . import disk
+from . import source
+from . import ARGS
 
 LOG = logging.getLogger(__name__)
 
 
-# pylint: disable=too-many-locals
-# pylint: disable=too-many-branches
-# pylint: disable=too-many-statements
-def differences(file_a, file_b, detailed_info=False):
-    """Compares the package details in 'file_a' against 'file_b' to determine
-    what files exist in 'file_b' but not in 'file_a'. This will also display
-    packages _removed_.
-    This function sorts the files into smallest to largest order. So if
-    'garageband1021.plist' is compared to 'garageband1011.plist', the
-    output will be based on packages that are in 'garageband1021.plist' but
-    not in 'garageband1011.plist'. In otherwords, '1021' is the _right_
-    file, '1011' is the _left_ file."""
-    sorted_files = sorted([f for f in [file_a, file_b]])
-    file_a = sorted_files[0]
-    base_a = os.path.basename(file_a)
-    file_b = sorted_files[1]
-    base_b = os.path.basename(file_b)
+def sources(plist_a, plist_b, style=ARGS.compare_style):
+    """Compares packages in the specified sources."""
+    styles = ['context', 'unified', 'html']
 
-    _supported = [_v for _v in config.SUPPORTED_PLISTS.values()]
-    _supported.sort()
+    if style not in styles:
+        LOG.info('Invalid diff style selected. Choose from {styles}'.format(styles=styles))
+        sys.exit(88)
 
-    if not all(_file.endswith('.plist') for _file in [file_a, file_b]):
-        print('Files must both be property list files.')
-        sys.exit(1)
+    packages_a = source.PropertyList(plist=plist_a, comparing=True).packages
+    packages_b = source.PropertyList(plist=plist_b, comparing=True).packages
 
-    if not all(_file in _supported for _file in [base_a, base_b]):
-        print('Files must be from {}'.format(_supported))
-        sys.exit(1)
+    if packages_a:
+        _unsequenced_a = sorted([pkg for pkg in packages_a if not pkg.sequence_number], key=lambda pkg: pkg.download_name)
+        _sequenced_a = sorted([pkg for pkg in packages_a if pkg.sequence_number], key=lambda pkg: pkg.sequence_number)
+        packages_a = _unsequenced_a + _sequenced_a
 
-    # Sort the two files so if the order of 'file_a' 'file_b' is
-    # 'garageband1021.plist' 'garageband1011.plist' it becomes
-    # 'garageband1011.plist' 'garageband1021.plist'
-    _tmp_dir = os.path.join(tempfile.gettempdir(), config.BUNDLE_ID)
+    if packages_b:
+        _unsequenced_b = sorted([pkg for pkg in packages_b if not pkg.sequence_number], key=lambda pkg: pkg.download_name)
+        _sequenced_b = sorted([pkg for pkg in packages_b if pkg.sequence_number], key=lambda pkg: pkg.sequence_number)
+        packages_b = _unsequenced_b + _sequenced_b
 
-    if not os.path.exists(file_a):
-        _fa_fallback = os.path.join(config.AUDIOCONTENT_FAILOVER_URL, 'lp10_ms3_content_2016', base_a)
-        _fa_url = misc.plist_url_path(base_a)
-        file_a = os.path.join(_tmp_dir, base_a)
+    if packages_a and packages_b:
+        packages_a_strings = ['{pkgname} ({mandatory}, {size})'.format(pkgname=pkg.download_name,
+                                                                       mandatory='Mandatory' if pkg.mandatory else 'Optional',
+                                                                       size=disk.convert(pkg.download_size)) for pkg in packages_a]
 
-        _req = curl_requests.CURL(url=_fa_url)
+        packages_b_strings = ['{pkgname} ({mandatory}, {size})'.format(pkgname=pkg.download_name,
+                                                                       mandatory='Mandatory' if pkg.mandatory else 'Optional',
+                                                                       size=disk.convert(pkg.download_size)) for pkg in packages_b]
 
-        if _req.status in config.HTTP_OK_STATUS:
-            _req.get(url=_fa_url, output=file_a)
+        if style == 'context':
+            diff = difflib.context_diff(packages_a_strings, packages_b_strings, fromfile=plist_a, tofile=plist_b)
+        elif style == 'unified':
+            diff = difflib.unified_diff(packages_a_strings, packages_b_strings, fromfile=plist_a, tofile=plist_b)
+        elif style == 'html':
+            output = Path().home() / 'Desktop/{plist1}_{plist2}.html'.format(plist1=plist_a.replace('.plist', ''),
+                                                                             plist2=plist_b.replace('.plist', ''))
+            differ = difflib.HtmlDiff()
+            diff = differ.make_file(packages_a_strings, packages_b_strings, fromdesc=plist_a, todesc=plist_b)
+
+            with open(output, 'w') as _f:
+                _f.write(diff)
+
+            if output.exists():
+                LOG.info('Diff HTML output to {output}'.format(output=output))
+
+        if style != 'html':
+            for line in diff:
+                print(line.strip('\n'))
+
+        sys.exit(0)
+    else:
+        if not packages_a and not packages_b:
+            plists = '{plist1} and {plist2}'.format(plist1=plist_a, plist2=plist_b)
         else:
-            _req.get(url=_fa_fallback, output=file_a)
+            if not packages_a:
+                plists = '{plist1}'.format(plist1=plist_a)
 
-        file_a_plist = plist.readPlist(plist_path=file_a)['Packages']
-        misc.clean_up(file_a)
-    elif os.path.exists(file_a):
-        file_a_plist = plist.readPlist(plist_path=file_a)['Packages']
+            if not packages_b:
+                plists = '{plist1}'.format(plist1=plist_b)
 
-    if not os.path.exists(file_b):
-        _fb_fallback = os.path.join(config.AUDIOCONTENT_FAILOVER_URL, 'lp10_ms3_content_2016', base_b)
-        _fb_url = misc.plist_url_path(base_b)
-        file_b = os.path.join(_tmp_dir, base_b)
-
-        _req = curl_requests.CURL(url=_fb_url)
-
-        if _req.status in config.HTTP_OK_STATUS:
-            _req.get(url=_fb_url, output=file_b)
-        else:
-            _req.get(url=_fb_fallback, output=file_b)
-
-        file_b_plist = plist.readPlist(plist_path=file_b)['Packages']
-        misc.clean_up(file_b)
-    elif os.path.exists(file_b):
-        file_a_plist = plist.readPlist(plist_path=file_a)['Packages']
-
-    # Build a set of package names.
-    file_a_packages = set([os.path.basename(file_a_plist[_pkg]['DownloadName'])
-                           for _pkg in file_a_plist])
-    file_b_packages = set([os.path.basename(file_b_plist[_pkg]['DownloadName'])
-                           for _pkg in file_b_plist])
-
-    # Get the new/removed files by using 'set_b.difference(set_a)'
-    new_files = file_b_packages.difference(file_a_packages)
-    rem_files = file_a_packages.difference(file_b_packages)
-    cmn_files = file_b_packages.intersection(file_a_packages)
-
-    if not detailed_info:
-        if new_files:
-            print('{} new packages in {} when compared to {}'.format(len(new_files),
-                                                                     base_b, base_a))
-
-        if rem_files:
-            print('{} packages removed from {} compared to {}'.format(len(rem_files),
-                                                                      base_a, base_b))
-
-        if cmn_files:
-            print('{} packages common between {} and {}'.format(len(cmn_files),
-                                                                base_a, base_b))
-
-    # Exit success because nothing else to do.
-    sys.exit(0)
-# pylint: enable=too-many-statements
-# pylint: enable=too-many-branches
-# pylint: enable=too-many-locals
+        LOG.info('Could not find packages in {plists}'.format(plists=plists))
+        sys.exit(99)

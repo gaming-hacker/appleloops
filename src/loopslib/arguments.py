@@ -1,375 +1,81 @@
-"""Contains the class for constructing the arguments for command line use."""
 import argparse
 import logging
-import os
-import re
-import sys
 
-try:
-    from urlparse import urlparse  # Python 2 package
-except ImportError:
-    from urllib.parse import urlparse  # Python 3 package
-
-from operator import attrgetter
-
-# pylint: disable=relative-import
-try:
-    import arguments_config
-    import compare
-    import config
-    import misc
-    import supported
-except ImportError:
-    from . import arguments_config
-    from . import compare
-    from . import config
-    from . import misc
-    from . import supported
-# pylint: enable=relative-import
+from . import argchecks
+from . import resource
+from . import VERSION_STRING
 
 LOG = logging.getLogger(__name__)
 
-# pylint: disable=too-many-locals
 
+def arg_choices(choices):
+    """Return a dictionary of choices for specific arguments."""
+    result = {'latest': dict(),
+              'plists': list(),
+              'supported': list()}
 
-class SaneUsageFormat(argparse.HelpFormatter):
-    """Makes the help output somewhat more sane. Code used was from Matt Wilkie.
-    http://stackoverflow.com/questions/9642692/argparse-help-without-duplicate-allcaps/9643162#9643162
-    """
-    def add_arguments(self, actions):
-        actions = sorted(actions, key=attrgetter('option_strings'))
+    # Choices
+    result['supported'] = sorted([app for app, _ in choices.items()])
 
-        super(SaneUsageFormat, self).add_arguments(actions)
+    # Construct choices for the latest supported source files
+    for app in result['supported']:
+        result['latest'][app] = sorted([_k for _k, _v in choices[app].items()], reverse=True)[0]
 
-    def _format_action_invocation(self, action):
-        if not action.option_strings:
-            default = self._get_default_metavar_for_positional(action)
-            metavar, = self._metavar_formatter(action, default)(1)
+        for _k, _v in choices[app].items():
+            result['plists'].append(_v)
 
-            return metavar
-
-        else:
-            parts = []
-
-            # if the Optional doesn't take a value, format is:
-            #    -s, --long
-            if action.nargs == 0:
-                parts.extend(action.option_strings)
+    return result
 
-            # if the Optional takes a value, format is:
-            #    -s ARGS, --long ARGS
-            else:
-                default = self._get_default_metavar_for_optional(action)
-                args_string = self._format_args(action, default)
 
-                for option_string in action.option_strings:
-                    parts.append(option_string)
-
-                return '{} {}'.format(', '.join(parts), args_string)
-
-            return ', '.join(parts)
-
-    @classmethod
-    def _get_default_metavar_for_optional(cls, action):
-        return action.dest.upper()
-
-    @classmethod
-    def _get_default_metavar_for_positional(cls, action):
-        return action.dest.upper()
-
-
-class LoopsArguments(object):
-    """Handles argument construction and parsing."""
-    def __init__(self):
-        self.parser = argparse.ArgumentParser(formatter_class=SaneUsageFormat)
-        self._verbose_args = self.parser.add_mutually_exclusive_group()
-        self._deploy_args = self.parser.add_mutually_exclusive_group()
-        self._plist_args = self.parser.add_mutually_exclusive_group()
-
-        self._valid_url_schemes = ['file', 'http', 'https']
-
-        self._construct_args()
-
-    def _construct_args(self):
-        """Constructs arguments (internal)."""
-        for _value in arguments_config.CL_ARGUMENTS.values():
-            args = _value['args']
-            kwargs = _value['kwargs']
-
-            self.parser.add_argument(*args, **kwargs)
-
-        for _value in arguments_config.CL_EXCL_GRP_ARGS_01.values():
-            args = _value['args']
-            kwargs = _value['kwargs']
-
-            self._verbose_args.add_argument(*args, **kwargs)
-
-        for _value in arguments_config.CL_EXCL_GRP_ARGS_02.values():
-            args = _value['args']
-            kwargs = _value['kwargs']
-
-            self._deploy_args.add_argument(*args, **kwargs)
-
-        for _value in arguments_config.CL_EXCL_GRP_ARGS_03.values():
-            args = _value['args']
-            kwargs = _value['kwargs']
-
-            self._plist_args.add_argument(*args, **kwargs)
-
-    def _mand_opt_check(self, err_msg, arg):
-        """Internal method to quickly print out mandatory/optional arg requirement."""
-        self.parser.print_usage(sys.stderr)
-        _msg = '{} {}: must provide at least -m/--mandatory or -o/--optional or both'.format(err_msg, arg)
-        print(_msg)
-        LOG.info(_msg)
-        sys.exit(1)
-
-    def _deploy_force_deploy_check(self, err_msg, arg):
-        """Internal method to quickly print out deploy/force deploy arg error."""
-        self.parser.print_usage(sys.stderr)
-        _msg = '{}: {}: not allowed with argument --deploy/--force-deploy'.format(err_msg, arg)
-        print(_msg)
-        LOG.info(_msg)
-        sys.exit(1)
-
-    def _dmg_download_force_download_check(self, err_msg, arg):
-        """Internal method to quickly print out build dmg/download/force download arg requirement."""
-        self.parser.print_usage(sys.stderr)
-        _msg = ('{}: {}: not allowed without argument -b/--build-dmg or -d/--destination '
-                'or -f/--force-destination'.format(err_msg, arg))
-        print(_msg)
-        LOG.info(_msg)
-        sys.exit(1)
-
-    # pylint: disable=too-many-branches
-    # pylint: disable=too-many-statements
-    def parse_args(self):
-        """Parses arguments."""
-        result = None
-        _name = sys.argv[0]
-        _err_msg = '{}: error: argument'.format(_name)
-
-        if len(sys.argv) == 1:
-            self.parser.print_help(sys.stderr)
-            sys.exit(1)
-
-        result = self.parser.parse_args()
-
-        # Manual argument checks that can't be done by argparse.
-        if result.apfs_dmg:
-            _arg = '--APFS'
-
-            if not result.build_dmg:
-                self.parser.print_usage(sys.stderr)
-                _msg = '{} {}: --APFS: not allowed without argument -b/--build-dmg'.format(_err_msg, _arg)
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-        # Check that at least on of the three apps is provided for download flag '-a/--apps'
-        if result.apps:
-            _arg = '-a/--apps'
-            _apps = [_app for _app, _value in config.APPS.items()]
-            _apps.extend(['allpkgs'])
-            _apps.sort()
-            _choices = ', '.join(["'{}'".format(_app) for _app in _apps])
-
-            if 'allpkgs' in result.apps:
-                result.apps = config.ALL_LATEST_APPS
-            else:
-                if not any([app in result.apps for app in _apps]):
-                    self.parser.print_usage(sys.stderr)
-                    _msg = '{} {}: expected one argument: (choose from {})'.format(_err_msg, _arg, _choices)
-                    print(_msg)
-                    LOG.info(_msg)
-                    sys.exit(1)
-
-            if not (result.mandatory or result.optional):
-                self._mand_opt_check(err_msg=_err_msg, arg=_arg)
-
-            # Even though presumption can be made about downloading to a temporary
-            # directory, can't assume that this is actually what is intended,
-            # so require specific argument to inform what action is to be taken.
-            if not (result.build_dmg or result.download or result.force_download):
-                if not (result.deployment or result.force_deployment):
-                    self._dmg_download_force_download_check(err_msg=_err_msg, arg=_arg)
-
-        # Handle plist argument exceptions
-        if result.plists:
-            _arg = '-p/--plists'
-            # Make sure all items passed end with plist
-            _supported = ['allpkgs']
-            _supported.extend([_key for _key, _value in config.SUPPORTED_PLISTS.items()])
-            _choices = ["'{}'".format(_plist) for _plist in _supported]
-            _choices.sort()
-            _choices = ', '.join(_choices)
-
-            # Error check first, then process
-            if not any([_plist in _supported for _plist in result.plists]):
-                _msg = '{} {}: excpected one argument: (choose from {})'.format(_err_msg, _arg, _choices)
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-            # Process after error checking
-            if 'allpkgs' in result.plists:
-                result.plists = [config.SUPPORTED_PLISTS.get(_plist) for _plist in config.ALL_LATEST_PLISTS]
-            elif 'allpkgs' not in result.plists:
-                result.plists = [config.SUPPORTED_PLISTS.get(_plist) for _plist in result.plists]
-
-            if not (result.mandatory or result.optional):
-                self._mand_opt_check(err_msg=_err_msg, arg=_arg)
-
-            # While it is possible to use the `-a/--apps` argument with the deployment arguments,
-            # it is a bad idea to try it with the `-p/--plists` argument because reasons.
-            if result.deployment or result.force_deployment:
-                self._deploy_force_deploy_check(err_msg=_err_msg, arg=_arg)
-
-            # Even though presumption can be made about downloading to a temporary
-            # directory, can't assume that this is actually what is intended,
-            # so require specific argument to inform what action is to be taken.
-            if not (result.build_dmg or result.download or result.force_download):
-                self._dmg_download_force_download_check(err_msg=_err_msg, arg=_arg)
-
-        # Test if user is root for deploy/force deploy modes
-        if not result.dry_run:
-            if result.deployment:
-                _arg = '--deploy'
-            elif result.force_deployment:
-                _arg = '--force-deploy'
-
-            if not misc.is_root() and (result.deployment or result.force_deployment):
-                _msg = '{} {}: you must be root to install packages'.format(_err_msg, _arg)
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-        # Handle some checking for more specific circumstances.
-        if (result.download or result.force_download or result.deployment or result.force_deployment):
-            if result.download:
-                _arg = '-d/--destination'
-
-            if result.force_download:
-                _arg = '-f/--force-destination'
-
-            if result.deployment:
-                _arg = '--deploy'
-
-            if result.force_deployment:
-                _arg = '--force-deploy'
-
-            if not (result.mandatory or result.optional):
-                _msg = '{} {}: must provide at least -m/--mandatory or -o/--optional or both'.format(_err_msg, _arg)
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-        if result.cache_server:
-            _arg = '--cache-server'
-            _cs = result.cache_server[0]
-            _url = urlparse(_cs)
-
-            if _url.scheme not in self._valid_url_schemes or not re.search(r'(?::\d+)', _url.netloc):  # and _url.path is not None:
-                _msg = '{} {}: cache server url format expected is https://example.org:1234'.format(_err_msg, _arg)
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-        if result.pkg_server:
-            _arg = '--pkg-server'
-            _ps = result.pkg_server[0]
-            _url = urlparse(_ps)
-            _scheme = _url.scheme
-
-            if not _scheme:
-                if _url.path.endswith('.dmg'):
-                    _scheme = 'file'
-                    config.DMG_DEPLOY_FILE = _url.path
-
-            if _scheme == 'file':
-                if not os.path.exists(_url.path):
-                    _msg = ('{} {}: the specified file path {} does not exist.'.format(_err_msg, _arg, _url.path))
-                    print(_msg)
-                    LOG.info(_msg)
-                    sys.exit(1)
-
-            if _scheme not in self._valid_url_schemes or not _url.path:
-                _msg = ('{} {}: mirror server url format expected is https://example.org/<path> '
-                        'or https://example.org/file.dmg or /path/to/appleloops.dmg'.format(_err_msg, _arg))
-                print(_msg)
-                LOG.info(_msg)
-                sys.exit(1)
-
-        if result.show_plists:
-            supported.show_supported_plists()
-
-        if result.compare:
-            compare.differences(file_a=result.compare[0], file_b=result.compare[1])
-
-        # Set "globals" here rather than in '__main__.py'
-        if not result.plists:
-            config.APPS_TO_PROCESS = result.apps if result.apps else misc.find_installed_apps()
-
-        if not result.apps:
-            config.PLISTS_TO_PROCESS = result.plists
-
-        if result.http2:
-            config.CURL_HTTP1 = False if result.http2 else True
-            config.CURL_HTTP_ARG = '--http2'
-
-        config.ALLOW_INSECURE_CURL = result.insecure
-        config.ALLOW_UNSECURE_PKGS = result.unsecure
-        config.APFS_DMG = result.apfs_dmg
-        config.CACHING_SERVER = result.cache_server[0].rstrip('/') if result.cache_server else None
-        config.DEBUG = getattr(logging, result.log_level, None)
-        config.DEPLOY_PKGS = result.deployment
-        config.FORCED_DEPLOYMENT = result.force_deployment
-        config.DMG_DEPLOY_FILE = config.DMG_DEPLOY_FILE if config.DMG_DEPLOY_FILE else None
-        config.DMG_FILE = result.build_dmg[0] if result.build_dmg else None
-        config.DRY_RUN = result.dry_run
-        config.CURL_HTTP1 = False if result.http2 else True
-        config.LOCAL_HTTP_SERVER = result.pkg_server[0].rstrip('/') if result.pkg_server else None
-        config.MANDATORY = result.mandatory
-        config.OPTIONAL = result.optional
-        config.QUIET = result.quiet
-        config.SILENT = result.silent
-        config.INST_SLEEP = str(result.sleep) if result.sleep else None
-        config.CURL_RETRIES = result.retries
-        config.TARGET = result.install_target[0] if result.install_target else config.TARGET
-
-        # Handle result.download/result.force_download
-        if result.download or result.force_download:
-            if result.download:
-                config.DESTINATION_PATH = result.download[0]
-            elif result.force_download:
-                config.FORCE_DOWNLOAD = True
-                config.DESTINATION_PATH = result.force_download[0]
-            else:
-                config.DESTINATION_PATH = config.DEFAULT_DEST
-
-        if config.DEPLOY_PKGS or config.FORCED_DEPLOYMENT:
-            config.DESTINATION_PATH = config.DEFAULT_DEST
-
-        # Handle HTTP based DMG
-        if config.LOCAL_HTTP_SERVER:
-            if config.LOCAL_HTTP_SERVER.endswith('.dmg'):
-                config.HTTP_DMG = True
-                config.HTTP_DMG_PATH = result.pkg_server[0]
-                config.LOCAL_HTTP_SERVER = None
-
-        # Handle building a DMG
-        if result.build_dmg:
-            if not config.DMG_FILE.endswith('.dmg'):
-                config.DMG_FILE = '{}.dmg'.format(config.DMG_FILE)
-
-            _dmg_path = os.path.splitext(config.DMG_FILE)[0]
-            config.DESTINATION_PATH = '{}.sparseimage'.format(_dmg_path)
-
-            # Set a psuedo 'config.DMG_VOLUME_MOUNTPATH' for dry-run use.
-            if config.DRY_RUN:
-                config.DMG_VOLUME_MOUNTPATH = '/Volumes/appleloops'
-
-        return result
-    # pylint: enable=too-many-statements
-    # pylint: enable=too-many-branches
-# pylint: enable=too-many-locals
+def create(choices):
+    """Create command line arguments."""
+    result = None
+    parser = argparse.ArgumentParser()
+    arguments = resource.read('arguments.yaml')
+    standard_args = arguments['standard']
+    mutually_excl = arguments['mutually_exclusive']
+    choices = arg_choices(choices=choices)
+
+    # Process standard arguments that don't have more complex exclusivity
+    for argset in standard_args:
+        _args = argset['args']
+        _kwargs = argset['kwargs']
+
+        # Plists that can be compared
+        if '--compare' in _args:
+            _kwargs['choices'] = choices['plists']
+
+        # Add version string to use in version output
+        if '--version' in _args:
+            _kwargs['version'] = VERSION_STRING
+
+        parser.add_argument(*_args, **_kwargs)
+
+    # Process each mutually exclusive set of arguments individually
+    mut_excl_prsr = dict()  # Store mutually exclusive parsers for each specific group
+
+    for mex_args, argsets in mutually_excl.items():
+        mut_excl_prsr[mex_args] = parser.add_mutually_exclusive_group()
+
+        for argset in argsets:
+            _args = argset['args']
+            _kwargs = argset['kwargs']
+
+            # Add specific choice options
+            if '--apps' in _args in _args:
+                _kwargs['choices'] = choices['supported']
+                _kwargs['choices'].insert(0, 'all')
+
+            if '--fetch-latest' in _args:
+                _kwargs['choices'] = choices['supported']
+                _kwargs['choices'].insert(0, 'all')
+
+            if '--plists' in _args:
+                _kwargs['choices'] = choices['plists']
+                _kwargs['choices'].insert(0, 'all')
+
+            mut_excl_prsr[mex_args].add_argument(*_args, **_kwargs)
+
+    result = argchecks.check(args=parser.parse_args(), helper=parser.print_usage, choices=choices)
+
+    return result
