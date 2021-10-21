@@ -151,7 +151,9 @@ def status(u):
     if isinstance(u, (Path, PurePath)):
         u = str(u)
 
-    cmd = ['/usr/bin/curl', '-I', '-L', '--silent', '-o', '/dev/null', '-w', '"%{http_code}"', '--user-agent', 'appleloops-update-check', u]
+    #grab curl from local environment, people use macports and homebrew
+    #default osx curl can be very outdated
+    cmd = ['curl', '-I', '-L', '--silent', '-o', '/dev/null', '-w', '"%{http_code}"', '--user-agent', 'appleloops-update-check', u]
     _p = subprocess.run(cmd, capture_output=True, encoding='utf-8')
     result = int(_p.stdout.strip().replace('"', ''))
 

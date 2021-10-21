@@ -23,6 +23,7 @@ AUDIOCONTENT:
       garageband1020: garageband1020.plist
       garageband1021: garageband1021.plist
       garageband1040: garageband1040.plist
+      garageband1044: garageband1044.plist
     logicpro:
       logicpro1021: logicpro1021.plist
       logicpro1022: logicpro1022.plist
@@ -32,6 +33,7 @@ AUDIOCONTENT:
       logicpro1040: logicpro1040.plist
       logicpro1042: logicpro1042.plist
       logicpro1050: logicpro1050.plist
+      logicpro1070: logicpro1070.plist
     mainstage:
       mainstage323: mainstage323.plist
       mainstage324: mainstage324.plist
